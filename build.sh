@@ -52,18 +52,18 @@ set -eux
 # Optional args:
 # -e       - enable UEFI firmware (from current host)
 # -v "8.1" - build version
-EFI=0          # no UEFI by default
+EFI=1          # no UEFI by default
 MNT=$( mktemp -d ) # image mount point
-EFIMNT=            # efi partition mount point
+EFIMNT=/efi            # efi partition mount point
 export PATH
 file="final.raw"
 mkdir -p ${MNT}
-dd if=/dev/zero of=${file} bs=4096 count=400000 progress=62000
+dd if=/dev/zero of=${file} bs=4096 count=2700000 progress=62000
 vnconfig ${VND} ${file}
 gpt create ${VND}
 [ ${EFI} -eq 1 ] && gpt add -a 2m -l "EFI system" -t efi -s 128m ${VND}
 gpt add -a 4k -l swap -s 512m -t swap ${VND}
-gpt add -a 4k -s 1000m -l root -t ffs ${VND}
+gpt add -a 4k -s 9500m -l root -t ffs ${VND}
 gpt show ${VND}
 
 dkctl ${VND} makewedges
@@ -90,7 +90,7 @@ fi
 
 # newfs dos and ffs
 sleep 2
-newfs -O 2 -n 500000 -b 4096 /dev/r${dk_dev}
+newfs -O 2 -n 5000000 -b 4096 /dev/r${dk_dev}
 mount /dev/${dk_dev} ${MNT}
 
 if echo $version|egrep "^[78]"; then
@@ -126,13 +126,13 @@ tmpfs           /var/shm        tmpfs   rw,-m1777,-sram%25
 cp $MNT/usr/mdec/boot $MNT/boot
 
 #Enable serial console
-echo 'menu=Boot with serial console:consdev com0;boot
-menu=Boot without serial console;boot
-default=1
-timeout=0' > $MNT/boot.cfg
-sed -i 's,^\(tty00.\).*,\1"/usr/libexec/getty std.9600"   vt100 on secure,' $MNT/etc/ttys
-sed -i 's,^\(ttyE0.\).*,\1"/usr/libexec/getty Pc"         wsvt25  on secure,' $MNT/etc/ttys
-sed -i 's,#\(screen[[:space:]]0.*\).*,\1,' /etc/wscons.conf
+#echo 'menu=Boot with serial console:consdev com0;boot
+#menu=Boot without serial console;boot
+#default=1
+#timeout=0' > $MNT/boot.cfg
+#sed -i 's,^\(tty00.\).*,\1"/usr/libexec/getty std.9600"   vt100 on secure,' $MNT/etc/ttys
+#sed -i 's,^\(ttyE0.\).*,\1"/usr/libexec/getty Pc"         wsvt25  on secure,' $MNT/etc/ttys
+#sed -i 's,#\(screen[[:space:]]0.*\).*,\1,' /etc/wscons.conf
 
 cp /etc/resolv.conf $MNT/etc/resolv.conf
 
@@ -141,18 +141,31 @@ echo "PKG_PATH=ftp://ftp.NetBSD.org/pub/pkgsrc/packages/NetBSD/amd64/$version/Al
 
 ( cd $MNT/dev ; ./MAKEDEV all )
 
-curl -L -k https://github.com/${repo}/archive/${ref}.tar.gz | tar xfz - -C $MNT/tmp
+#curl -L -k https://github.com/${repo}/archive/${ref}.tar.gz | tar xfz - -C $MNT/tmp
 
 
-chroot $MNT sh -c '. /etc/profile; pkg_add python38'
-chroot $MNT sh -c '. /etc/profile; pkg_add mozilla-rootcerts; mozilla-rootcerts install'
-chroot $MNT sh -c '. /etc/profile; cd /tmp/cloud-init-*; PYTHON=/usr/pkg/bin/python3.8 ./tools/build-on-netbsd'
+#chroot $MNT sh -c '. /etc/profile; pkg_add python310'
+#chroot $MNT sh -c '. /etc/profile; pkg_add 
+#chroot $MNT sh -c '. /etc/profile; cd /tmp/cloud-init-*; PYTHON=/usr/pkg/bin/python3.8 ./tools/build-on-netbsd'
 # Ensure we've got all the dependency installed as expected
-chroot $MNT sh -c '. /etc/profile; /usr/pkg/bin/python3.8 -mcloudinit.handlers.cloud_config'
+#chroot $MNT sh -c '. /etc/profile; /usr/pkg/bin/python3.8 -mcloudinit.handlers.cloud_config'
 chroot $MNT sh -c '. /etc/profile; pkg_add pkgin'
+chroot $MNT sh -c '. /etc/profile; pkg_add python311'
+chroot $MNT sh -c '. /etc/profile; pkg_add py311-pip'
+chroot $MNT sh -c '. /etc/profile; pkg_add ca-certificates'
 
 echo 'http://ftp.netbsd.org/pub/pkgsrc/packages/NetBSD/$arch/$osrelease/All' > $MNT/usr/pkg/etc/pkgin/repositories.conf
-#chroot $MNT sh -c '. /etc/profile; pkgin update'
+chroot $MNT sh -c '. /etc/profile; pkgin update'
+chroot $MNT sh -c ". /etc/profile; cat /usr/pkg/etc/ca-certificates-dir.conf | sed 's/#ETCCERTSDIR/ETCCERTSDIR/' > /tmp/ca-certificates-dir.conf; mv /tmp/ca-certificates-dir.conf /usr/pkg/etc/ca-certificates-dir.conf"
+chroot $MNT sh -c '. /etc/profile; update-ca-certificates'
+chroot $MNT sh -c '. /etc/profile; pip3.11 install jsonpointer'
+chroot $MNT sh -c ". /etc/profile; cat /etc/ssh/sshd_config | sed 's/#PasswordAuthentication\ yes/PasswordAuthentication no/' > /tmp/sshd_config; mv /tmp/sshd_config /etc/ssh/sshd_config" 
+
+curl -L -k https://github.com/${repo}/archive/${ref}.tar.gz | tar xfz - -C $MNT/tmp
+chroot $MNT sh -c '. /etc/profile; cd /tmp/cloud-init-*; PYTHON=/usr/pkg/bin/python3.11 ./tools/build-on-netbsd'
+chroot $MNT sh -c '. /etc/profile; /usr/pkg/bin/python3.11 -mcloudinit.handlers.cloud_config'
+echo "datasource_list: ['Exoscale']" >> $MNT/etc/cloud/cloud.cfg
+cp /root/cli/bin/exo $MNT/usr/pkg/bin/
 
 # Disable root account
 test -z "$debug" && chroot $MNT sh -c 'usermod -C yes root'
